@@ -1,0 +1,162 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: |
+  login
+  Sample SAM Template for login
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+
+Resources:
+  HomePageFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: HomePage/
+      Handler: index.handler
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 5
+      Events:
+        ApiGEThome:
+          Type: Api
+          Properties:
+            Path: /home
+            Method: GET
+            RestApiId: !Ref Api
+  LambdaAuthorizer:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: LambdaAuthorizer
+      CodeUri: ./Auth
+      Handler: index.handler
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 10
+      Tracing: Active
+      Environment:
+        Variables:
+          JWT_SECRET: hello@dynamodb@nischith@212
+      Layers:
+        - !Ref Layer
+  LambdaAuthorizerLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${LambdaAuthorizer}
+  VerifyLogin:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Function ${ResourceName}
+        - ResourceName: VerifyLogin
+      CodeUri: ./Login
+      Handler: index.handler
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 15
+      Tracing: Active
+      Events:
+        LoginAPIPOSTlogin:
+          Type: Api
+          Properties:
+            Path: /login
+            Method: POST
+            RestApiId: !Ref LoginAPI
+      Layers:
+        - !Ref Layer
+      Environment:
+        Variables:
+          USERS_TABLE_NAME: !Ref users
+          USERS_TABLE_ARN: !GetAtt users.Arn
+          JWT_SECRET: hello@dynamodb@nischith@212
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref users
+  VerifyLoginLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${VerifyLogin}
+  LoginAPI:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub
+        - ${ResourceName} From Stack ${AWS::StackName}
+        - ResourceName: LoginAPI
+      StageName: dev
+      DefinitionBody:
+        openapi: "3.0"
+        info: {}
+        paths:
+          /login:
+            post:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${VerifyLogin.Arn}/invocations
+              responses: {}
+      EndpointConfiguration: REGIONAL
+      TracingEnabled: true
+      Cors:
+        MaxAge: 5
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub
+        - ${ResourceName} From Stack ${AWS::StackName}
+        - ResourceName: Api
+      StageName: dev
+      DefinitionBody:
+        openapi: "3.0"
+        info: {}
+        paths:
+          /home:
+            get:
+              x-amazon-apigateway-integration:
+                httpMethod: POST
+                type: aws_proxy
+                uri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${HomePageFunction.Arn}/invocations
+              responses: {}
+      EndpointConfiguration: REGIONAL
+      TracingEnabled: true
+      Auth:
+        Authorizers:
+          LambdaAuth:
+            FunctionArn: !GetAtt LambdaAuthorizer.Arn
+        DefaultAuthorizer: LambdaAuth
+      Cors:
+        MaxAge: 5
+  users:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+  Layer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      Description: !Sub
+        - Stack ${AWS::StackName} Layer ${ResourceName}
+        - ResourceName: Layer
+      ContentUri: ./dependencies
+      RetentionPolicy: Retain
+    Metadata:
+      BuildMethod: nodejs20.x
+Outputs:
+  HomePageApiUrl:
+    Description: URL for the Home Page API
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/dev/home"
+
+  LoginApiUrl:
+    Description: URL for the Login API
+    Value: !Sub "https://${LoginAPI}.execute-api.${AWS::Region}.amazonaws.com/dev/login"
